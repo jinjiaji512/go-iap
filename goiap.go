@@ -51,6 +51,11 @@ type Error struct {
 	errCode float64
 }
 
+type ResponseData struct {
+	Status         float64  `json:"status"`
+	ReceiptContent *Receipt `json:"receipt"`
+}
+
 // Simple method to get the original error code from the error object
 func (e *Error) Code() float64 {
 	return e.errCode
@@ -58,9 +63,15 @@ func (e *Error) Code() float64 {
 
 // Given receiptData (base64 encoded) it tries to connect to either the sandbox (useSandbox true) or
 // apples ordinary service (useSandbox false) to validate the receipt. Returns either a receipt struct or an error.
-func VerifyReceipt(receiptData string, useSandbox bool) (*Receipt, error) {
-	receipt, err := sendReceiptToApple(receiptData, verificationURL(useSandbox))
-	return receipt, err
+func VerifyReceipt(receiptData string, useSandbox bool) (*Receipt, bool, error) {
+	resp, err := sendReceiptToApple(receiptData, verificationURL(useSandbox))
+	if err != nil {
+		return nil, false, err
+	}
+	if resp.Status != AuthSuccess {
+		return nil, false, nil
+	}
+	return resp.ReceiptContent, true, nil
 }
 
 // Selects the proper url to use when talking to apple based on if we should use the sandbox environment or not
@@ -73,7 +84,7 @@ func verificationURL(useSandbox bool) string {
 }
 
 // Sends the receipt to apple, returns the receipt or an error upon completion
-func sendReceiptToApple(receiptData, url string) (*Receipt, error) {
+func sendReceiptToApple(receiptData, url string) (*ResponseData, error) {
 	requestData, err := json.Marshal(receiptRequestData{receiptData})
 
 	if err != nil {
@@ -91,29 +102,24 @@ func sendReceiptToApple(receiptData, url string) (*Receipt, error) {
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
-
-	var responseData struct {
-		Status         float64  `json:"status"`
-		ReceiptContent *Receipt `json:"receipt"`
-	}
-
-	responseData.ReceiptContent = new(Receipt)
-
-	err = json.Unmarshal(body, &responseData)
-
 	if err != nil {
 		return nil, err
 	}
 
-	if responseData.Status != 0 {
-		return nil, verificationError(responseData.Status)
+	var responseData ResponseData
+	responseData.ReceiptContent = new(Receipt)
+
+	err = json.Unmarshal(body, &responseData)
+	if err != nil {
+		return nil, err
 	}
 
-	return responseData.ReceiptContent, nil
+	return &responseData, nil
 }
 
 // Error codes as they returned by the App Store
 const (
+	AuthSuccess          = 0
 	UnreadableJSON       = 21000
 	MalformedData        = 21002
 	AuthenticationError  = 21003
